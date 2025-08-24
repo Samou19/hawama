@@ -1,6 +1,29 @@
 library(shiny)
 library(DT)
 library(janitor)   # 📌 pour adorn_totals
+library(openxlsx)
+library(googlesheets4)
+library(gmailr)
+library(janitor)
+library("gargle")
+library(googledrive)
+library(usethis)
+
+
+# Authentification avec le compte de service
+#gs4_auth(path = ".secrets/service-account.json")
+#sheet_id <- "1ryfmQZk0HJt5oLC3yBF5ctu-Dwjrt09-SPuhDrSGurk"
+
+# Spécifie le chemin vers ta clé JSON
+service_account_key <- ".secrets/service-account.json"
+
+# Authentification via compte de service
+gs4_auth(path = service_account_key)
+drive_auth(path = service_account_key)
+
+# Get the ID of the sheet for writing programmatically
+# This should be placed at the top of your shiny app
+sheet_id <- googledrive::drive_get("Articles Hawama")$id
 
 ui <- fluidPage(
   titlePanel("Calculateur Hawama"),
@@ -20,6 +43,11 @@ ui <- fluidPage(
       .btn:hover {
         background-color: #0056b3;
       }
+      
+       hr {
+        border: 1px solid #ccc;
+        margin: 15px 0;
+        }
     "))
   ),
   sidebarLayout(
@@ -29,12 +57,15 @@ ui <- fluidPage(
       numericInput("taux_cfa", "Taux CFA :", value = 655, min = 1, step = 1),
       numericInput("transport", "Transport (en %) :", value = 0.35, min = 0, step = 0.01),
       numericInput("marge", "Marge (en %) :", value = 0.30, min = 0, step = 0.01),
-      actionButton("ajouter", "➕ Ajouter l'article"),
+      actionButton("ajouter", "➕ Ajouter un article"),
       br(), br(),
       actionButton("modifier", "✏️ Modifier la ligne sélectionnée"),
       br(), br(),
-      actionButton("supprimer", "🗑️ Supprimer la ligne sélectionnée")
-    ),
+      actionButton("supprimer", "🗑️ Supprimer la ligne sélectionnée"),
+      hr(),  # <-- ligne horizontale
+      actionButton("charger_gs", "📥 Charger depuis Google Sheets"),
+      br(), br(),
+      actionButton("sauvegarde_gs", "☁️ Sauvegarder sur Google Sheets")),
     
     mainPanel(
       h3("Tableau des articles"),
@@ -43,7 +74,27 @@ ui <- fluidPage(
   )
 )
 
+# https://docs.google.com/spreadsheets/d/1DffFGdokwyUIuZbqznIlANb8zvhv1bMSTTbGXdEvYrA/edit?gid=0#gid=0
+
 server <- function(input, output, session) {
+  
+  # Sauvegarder sur Google Sheets
+# Sauvegarder les données dans la Google Sheet
+  observeEvent(input$sauvegarde_gs, {
+    req(nrow(articles()) > 0) # vérifier qu'il y a des données
+    sheet_write(data = articles(),
+                ss = sheet_id,
+                sheet = "main")
+  })
+  # Charger les données depuis la Google Sheet
+  observeEvent(input$charger_gs, {
+    # Read our sheet
+    data <- read_sheet(ss = sheet_id, 
+                         sheet = "main")
+    #data <- googlesheets4::read_sheet(ss, sheet = "Articles")
+    articles(data)
+  })
+  # fin
   # Stockage réactif des articles
   articles <- reactiveVal(data.frame(
     Nom = character(),
@@ -162,10 +213,16 @@ server <- function(input, output, session) {
         buttons = c('excel', 'pdf'),
         columnDefs = list(list(className = "dt-center", targets = "_all")), # centre toutes les colonnes
         searching = FALSE
-        ),
+      ),
       extensions = 'Buttons'
     )
   })
 }
+
+# export du sheet
+# aa=googledrive::drive_get("Articles Hawama")
+# aa$drive_resource[[1]]
+# $exportLinks$`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+# [1] "https://docs.google.com/spreadsheets/export?id=1ryfmQZk0HJt5oLC3yBF5ctu-Dwjrt09-SPuhDrSGurk&exportFormat=xlsx"
 
 shinyApp(ui, server)
