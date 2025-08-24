@@ -8,6 +8,7 @@ library(janitor)
 library("gargle")
 library(googledrive)
 library(usethis)
+library(tidyverse)
 
 
 # Authentification avec le compte de service
@@ -31,7 +32,14 @@ ui <- fluidPage(
     tags$style(HTML("
       body {
         font-family: Arial, sans-serif;
-        background-color: #f4f4f4;
+        background-color: white;/*#f4f4f4*/
+      }
+      
+        .well {
+        background-color: #64b5f6; /* Gris clair */
+        border-radius: 10px; /* Coins arrondis */
+        padding: 20px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
       }
       .shiny-input-container {
         margin-bottom: 15px;
@@ -47,7 +55,32 @@ ui <- fluidPage(
        hr {
         border: 1px solid #ccc;
         margin: 15px 0;
-        }
+       }
+        
+      /* Style général des boutons DataTables */
+      .dt-button {
+        background-color: #007bff !important; /* Couleur par défaut */
+        color: white !important;
+        border: none !important;
+        border-radius: 6px !important;
+        padding: 6px 12px !important;
+        font-weight: bold;
+        margin-right: 5px;
+      }
+
+      /* Bouton Excel : vert */
+      .buttons-excel {
+        background-color: #28a745 !important;
+      }
+
+      /* Bouton PDF : rouge */
+      .buttons-pdf {
+        background-color: #dc3545 !important;
+      }
+
+      .dt-button:hover {
+        opacity: 0.85;
+      }
     "))
   ),
   sidebarLayout(
@@ -57,14 +90,15 @@ ui <- fluidPage(
       numericInput("taux_cfa", "Taux CFA :", value = 655, min = 1, step = 1),
       numericInput("transport", "Transport (en %) :", value = 0.35, min = 0, step = 0.01),
       numericInput("marge", "Marge (en %) :", value = 0.30, min = 0, step = 0.01),
+      hr(),
+      actionButton("charger_gs", "📥 Charger depuis Google Sheets"),
+      hr(),
       actionButton("ajouter", "➕ Ajouter un article"),
       br(), br(),
       actionButton("modifier", "✏️ Modifier la ligne sélectionnée"),
       br(), br(),
       actionButton("supprimer", "🗑️ Supprimer la ligne sélectionnée"),
       hr(),  # <-- ligne horizontale
-      actionButton("charger_gs", "📥 Charger depuis Google Sheets"),
-      br(), br(),
       actionButton("sauvegarde_gs", "☁️ Sauvegarder sur Google Sheets")),
     
     mainPanel(
@@ -79,7 +113,7 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   # Sauvegarder sur Google Sheets
-# Sauvegarder les données dans la Google Sheet
+  # Sauvegarder les données dans la Google Sheet
   observeEvent(input$sauvegarde_gs, {
     req(nrow(articles()) > 0) # vérifier qu'il y a des données
     sheet_write(data = articles(),
@@ -90,7 +124,7 @@ server <- function(input, output, session) {
   observeEvent(input$charger_gs, {
     # Read our sheet
     data <- read_sheet(ss = sheet_id, 
-                         sheet = "main")
+                       sheet = "main")
     #data <- googlesheets4::read_sheet(ss, sheet = "Articles")
     articles(data)
   })
@@ -98,6 +132,7 @@ server <- function(input, output, session) {
   # Stockage réactif des articles
   articles <- reactiveVal(data.frame(
     Nom = character(),
+    Date = character(),
     `Prix Shein (€)` = numeric(),
     `Taux CFA` = numeric(),
     `Transport (%)` = numeric(),
@@ -116,6 +151,7 @@ server <- function(input, output, session) {
     
     new_row <- data.frame(
       Nom = input$nom,
+      Date = format(Sys.time(), '%d-%m-%Y %HH:%M:%S'),
       `Prix Shein (€)` = input$prix_shein,
       `Taux CFA` = input$taux_cfa,
       `Transport (%)` = input$transport,
@@ -126,6 +162,17 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     
+    # Renommer les colonnes pour correspondre à celles de la Google Sheet
+    new_row = new_row |> rename_with(~ case_when(
+      .x == "Prix.Shein...." ~ "Prix Shein (€)",
+      .x == "Taux.CFA" ~ "Taux CFA",
+      .x == "Transport...." ~ "Transport (%)",
+      .x == "Prix.d.achat..CFA." ~ "Prix d'achat (CFA)",
+      .x == "Marge...." ~ "Marge (%)",
+      .x == "Prix.de.vente..CFA." ~ "Prix de vente (CFA)",
+      .x == "Bénéfice..CFA." ~ "Bénéfice (CFA)",
+      TRUE ~ .x
+    ))
     articles(rbind(articles(), new_row))
   })
   
@@ -155,6 +202,7 @@ server <- function(input, output, session) {
     
     data[sel, ] <- list(
       input$nom,
+      format(Sys.time(), '%d-%m-%Y %HH:%M:%S'),
       input$prix_shein,
       input$taux_cfa,
       input$transport,
@@ -180,24 +228,34 @@ server <- function(input, output, session) {
     data <- articles()
     
     if (nrow(articles()) > 1) {
-      # 👉 ajoute une ligne TOTAL sur les colonnes numériques
-      # data <- adorn_totals(data, where = "row", fill = "-", na.rm = TRUE,,,,
-      #                      "Prix Shein (€)", "Prix de vente (CFA)",
-      #                      "Bénéfice (CFA)")
       data <- articles()
-      # print(colnames(data))
-      data <- adorn_totals(data, where = "row",,,,"Prix.Shein....", "Prix.d.achat..CFA.",
-                           "Prix.de.vente..CFA.", "Bénéfice..CFA.")
+      data <- data %>%
+        rename_with(~ case_when(
+          .x == "Prix.Shein...." ~ "Prix Shein (€)",
+          .x == "Taux.CFA" ~ "Taux CFA",
+          .x == "Transport...." ~ "Transport (%)",
+          .x == "Prix.d.achat..CFA." ~ "Prix d'achat (CFA)",
+          .x == "Marge...." ~ "Marge (%)",
+          .x == "Prix.de.vente..CFA." ~ "Prix de vente (CFA)",
+          .x == "Bénéfice..CFA." ~ "Bénéfice (CFA)",
+          TRUE ~ .x
+        ))
+      #print(colnames(data))
+      data <- adorn_totals(data, where = "row",,,,
+                           "Prix Shein (€)", 
+                           "Prix d'achat (CFA)",
+                           "Prix de vente (CFA)", 
+                           "Bénéfice (CFA)")
       
     }
-    #data <- articles()
-    
+    # Affichage du tableau avec DT
     datatable(
       data,
       rownames = FALSE,  # pas de numéros de ligne
       selection = "single",  # sélection d’une seule ligne à la fois
       colnames = c(
         "Nom",
+        "Date",
         "Prix Shein (€)",
         "Taux CFA",
         "Transport (%)",
@@ -210,19 +268,33 @@ server <- function(input, output, session) {
         pageLength = 10,
         autoWidth = F,
         dom = 'Bfrtip',
-        buttons = c('excel', 'pdf'),
+        buttons = list(
+          list(extend = "excel", text = "📥 Exporter en Excel"),
+          list(extend = "pdf", text = "📄 Exporter en PDF")
+        ),
         columnDefs = list(list(className = "dt-center", targets = "_all")), # centre toutes les colonnes
-        searching = FALSE
+        searching = FALSE,
+        language = list(
+          lengthMenu = "Afficher _MENU_ articles",
+          zeroRecords = "Aucun article trouvé",
+          info = "Affichage de _START_ à _END_ sur _TOTAL_ articles",
+          infoEmpty = "Aucun article disponible",
+          infoFiltered = "(filtré à partir de _MAX_ articles totales)",
+          search = "Rechercher :",
+          paginate = list(
+            previous = "Précédent",
+            'next' = "Suivant"
+          ),
+          buttons = list(
+            excel = "Exporter en Excel",
+            pdf = "Exporter en PDF"
+          )
+        )
       ),
       extensions = 'Buttons'
     )
   })
 }
 
-# export du sheet
-# aa=googledrive::drive_get("Articles Hawama")
-# aa$drive_resource[[1]]
-# $exportLinks$`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
-# [1] "https://docs.google.com/spreadsheets/export?id=1ryfmQZk0HJt5oLC3yBF5ctu-Dwjrt09-SPuhDrSGurk&exportFormat=xlsx"
-
+# Lancer l'application Shiny
 shinyApp(ui, server)
