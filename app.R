@@ -81,6 +81,42 @@ ui <- fluidPage(
       .dt-button:hover {
         opacity: 0.85;
       }
+      /*Notification de gargement et sauvegarde
+      .shiny-notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background-color: #28a745;
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      font-size: 16px;
+      box-shadow: 0px 4px 8px rgba(0,0,0,0.2);
+      }*/
+  .shiny-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background-color: #28a745;
+    color: white;
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: bold;
+    box-shadow: 0px 4px 12px rgba(0,0,0,0.25);
+    opacity: 0;
+    animation: fadeIn 0.6s forwards, fadeOut 0.6s 3.5s forwards;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes fadeOut {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(-10px); }
+  }
     "))
   ),
   sidebarLayout(
@@ -112,23 +148,6 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
-  # Sauvegarder sur Google Sheets
-  # Sauvegarder les données dans la Google Sheet
-  observeEvent(input$sauvegarde_gs, {
-    req(nrow(articles()) > 0) # vérifier qu'il y a des données
-    sheet_write(data = articles(),
-                ss = sheet_id,
-                sheet = "main")
-  })
-  # Charger les données depuis la Google Sheet
-  observeEvent(input$charger_gs, {
-    # Read our sheet
-    data <- read_sheet(ss = sheet_id, 
-                       sheet = "main")
-    #data <- googlesheets4::read_sheet(ss, sheet = "Articles")
-    articles(data)
-  })
-  # fin
   # Stockage réactif des articles
   articles <- reactiveVal(data.frame(
     Nom = character(),
@@ -143,27 +162,81 @@ server <- function(input, output, session) {
     stringsAsFactors = FALSE
   ))
   
+  # Sauvegarder sur Google Sheets
+  # Charger les données depuis la Google Sheet
+  vals <- reactiveValues(data = NULL)
+  observeEvent(input$charger_gs, {
+    # Read our sheet
+    vals$data1 <- read_sheet(ss = sheet_id, sheet = "main")
+    data <- read_sheet(ss = sheet_id, 
+                       sheet = "main")
+    #data <- googlesheets4::read_sheet(ss, sheet = "Articles")
+    articles(data)
+    
+    # Après la sauvegarde réussie :
+    showNotification(
+      ui = "✅ Données chargées avec succès !",
+      type = "message",  # types: "message", "warning", "error"
+      duration = 10       # durée en secondes
+    )
+  })
+  # Sauvegarder les données dans la Google Sheet
+  observeEvent(input$sauvegarde_gs, {
+    req(nrow(articles()) > 0) # vérifier qu'il y a des données
+    # Quand l'utilisateur ne charge pas les données
+    # data1 <- read_sheet(ss = sheet_id, 
+    #                    sheet = "main")
+    if (is.null(vals$data1) ) {
+      # sheet_delete(ss = sheet_id, sheet = "main")
+      # sheet_add(ss = sheet_id, sheet = "main")
+      data <- read_sheet(ss = sheet_id, 
+                         sheet = "main")
+      data2 <- rbind(data, articles())
+      sheet_write(data = data2,
+                  ss = sheet_id,
+                  sheet = "main")
+    } else {
+      # Vider la feuille avant d'écrire les nouvelles données
+      # sheet_clear(ss = sheet_id, sheet = "main")
+      sheet_write(data = articles(),
+                  ss = sheet_id,
+                  sheet = "main")
+    }
+    
+    
+    # Après la sauvegarde réussie :
+    showNotification(
+      ui = "✅ Données sauvegardées avec succès !",
+      type = "message",  # types: "message", "warning", "error"
+      duration = 10       # durée en secondes
+    )
+  })
+
+  # fin
+
+  
   # Ajouter un article
   observeEvent(input$ajouter, {
-    prix_achat <- (1 + input$transport) * input$prix_shein * input$taux_cfa
-    prix_vente <- (1 + input$marge) * prix_achat
+    prix_achat <- round((1 + input$transport) * input$prix_shein * input$taux_cfa / 100) * 100 
+    prix_vente <- round((1 + input$marge) * prix_achat / 100) * 100 
     benefice <- prix_vente - prix_achat
     
     new_row <- data.frame(
       Nom = input$nom,
-      Date = format(Sys.time(), '%d-%m-%Y %HH:%M:%S'),
+      Date = format(as.POSIXct(Sys.time(), tz = "Europe/Paris"), "%d-%m-%Y %H:%M:%S"),
       `Prix Shein (€)` = input$prix_shein,
       `Taux CFA` = input$taux_cfa,
       `Transport (%)` = input$transport,
-      `Prix d'achat (CFA)` = round(prix_achat, 0),
+      `Prix d'achat (CFA)` = round(prix_achat / 100) * 100,
       `Marge (%)` = input$marge,
-      `Prix de vente (CFA)` = round(prix_vente, 0),
-      `Bénéfice (CFA)` = round(benefice, 0),
+      `Prix de vente (CFA)` = round(prix_vente / 100) * 100,
+      `Bénéfice (CFA)` =  benefice,
       stringsAsFactors = FALSE
     )
     
     # Renommer les colonnes pour correspondre à celles de la Google Sheet
-    new_row = new_row |> rename_with(~ case_when(
+    new_row = new_row |> 
+      rename_with(~ case_when(
       .x == "Prix.Shein...." ~ "Prix Shein (€)",
       .x == "Taux.CFA" ~ "Taux CFA",
       .x == "Transport...." ~ "Transport (%)",
@@ -194,22 +267,25 @@ server <- function(input, output, session) {
     sel <- input$tableau_rows_selected
     req(length(sel) == 1)  # assure qu'une ligne est bien sélectionnée
     
-    prix_achat <- (1 + input$transport) * input$prix_shein * input$taux_cfa
-    prix_vente <- (1 + input$marge) * prix_achat
+    prix_achat <- round((1 + input$transport) * input$prix_shein * input$taux_cfa / 100) * 100 
+    prix_vente <- round((1 + input$marge) * prix_achat / 100) * 100 
     benefice <- prix_vente - prix_achat
     
     data <- articles()
     
     data[sel, ] <- list(
       input$nom,
-      format(Sys.time(), '%d-%m-%Y %HH:%M:%S'),
+      format(as.POSIXct(Sys.time(), tz = "Europe/Paris"), "%d-%m-%Y %H:%M:%S"),
       input$prix_shein,
       input$taux_cfa,
       input$transport,
-      round(prix_achat, 0),
+      round(prix_achat / 100) * 100,
+      # round(prix_achat, 0),
       input$marge,
-      round(prix_vente, 0),
-      round(benefice, 0)
+      round(prix_vente / 100) * 100,
+      # round(prix_vente, 0),
+      # round(benefice / 100) * 100,
+      benefice
     )
     articles(data)
   })
