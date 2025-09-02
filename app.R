@@ -167,11 +167,17 @@ server <- function(input, output, session) {
   vals <- reactiveValues(data = NULL)
   observeEvent(input$charger_gs, {
     # Read our sheet
-    vals$data1 <- read_sheet(ss = sheet_id, sheet = "main")
     data <- read_sheet(ss = sheet_id, 
-                       sheet = "main")
-    #data <- googlesheets4::read_sheet(ss, sheet = "Articles")
-    articles(data)
+                       sheet = "main") 
+    
+    data <- data |>
+      mutate(date_num = as.numeric(dmy_hms(Date, tz = "Europe/Paris"))) |>
+      arrange(desc(date_num))
+    
+    # Stocker les données dans une variable réactive
+    vals$data1 <- data 
+    
+    articles(data) 
     
     # Après la sauvegarde réussie :
     showNotification(
@@ -180,6 +186,7 @@ server <- function(input, output, session) {
       duration = 10       # durée en secondes
     )
   })
+  
   # Sauvegarder les données dans la Google Sheet
   observeEvent(input$sauvegarde_gs, {
     req(nrow(articles()) > 0) # vérifier qu'il y a des données
@@ -191,14 +198,18 @@ server <- function(input, output, session) {
       # sheet_add(ss = sheet_id, sheet = "main")
       data <- read_sheet(ss = sheet_id, 
                          sheet = "main")
-      data2 <- rbind(data, articles())
+      
+      data3 <- articles() |> select(-date_num)
+      data2 <- rbind(data, data3)
+      
       sheet_write(data = data2,
                   ss = sheet_id,
                   sheet = "main")
     } else {
       # Vider la feuille avant d'écrire les nouvelles données
       # sheet_clear(ss = sheet_id, sheet = "main")
-      sheet_write(data = articles(),
+      data3 <- articles() |> select(-date_num)
+      sheet_write(data = data3,
                   ss = sheet_id,
                   sheet = "main")
     }
@@ -211,19 +222,19 @@ server <- function(input, output, session) {
       duration = 10       # durée en secondes
     )
   })
-
+  
   # fin
-
+  
   
   # Ajouter un article
   observeEvent(input$ajouter, {
     prix_achat <- round((1 + input$transport) * input$prix_shein * input$taux_cfa / 100) * 100 
     prix_vente <- round((1 + input$marge) * prix_achat / 100) * 100 
     benefice <- prix_vente - prix_achat
-    
+    dat = format(as.POSIXct(Sys.time(), tz = "Europe/Paris"), "%d-%m-%Y %H:%M:%S")
     new_row <- data.frame(
       Nom = input$nom,
-      Date = format(as.POSIXct(Sys.time(), tz = "Europe/Paris"), "%d-%m-%Y %H:%M:%S"),
+      Date = dat,
       `Prix Shein (€)` = input$prix_shein,
       `Taux CFA` = input$taux_cfa,
       `Transport (%)` = input$transport,
@@ -231,29 +242,39 @@ server <- function(input, output, session) {
       `Marge (%)` = input$marge,
       `Prix de vente (CFA)` = round(prix_vente / 100) * 100,
       `Bénéfice (CFA)` =  benefice,
+      date_num = as.numeric(dmy_hms(dat, tz = "Europe/Paris")),
       stringsAsFactors = FALSE
     )
     
     # Renommer les colonnes pour correspondre à celles de la Google Sheet
     new_row = new_row |> 
       rename_with(~ case_when(
-      .x == "Prix.Shein...." ~ "Prix Shein (€)",
-      .x == "Taux.CFA" ~ "Taux CFA",
-      .x == "Transport...." ~ "Transport (%)",
-      .x == "Prix.d.achat..CFA." ~ "Prix d'achat (CFA)",
-      .x == "Marge...." ~ "Marge (%)",
-      .x == "Prix.de.vente..CFA." ~ "Prix de vente (CFA)",
-      .x == "Bénéfice..CFA." ~ "Bénéfice (CFA)",
-      TRUE ~ .x
-    ))
-    articles(rbind(articles(), new_row))
+        .x == "Prix.Shein...." ~ "Prix Shein (€)",
+        .x == "Taux.CFA" ~ "Taux CFA",
+        .x == "Transport...." ~ "Transport (%)",
+        .x == "Prix.d.achat..CFA." ~ "Prix d'achat (CFA)",
+        .x == "Marge...." ~ "Marge (%)",
+        .x == "Prix.de.vente..CFA." ~ "Prix de vente (CFA)",
+        .x == "Bénéfice..CFA." ~ "Bénéfice (CFA)",
+        TRUE ~ .x
+      )) 
+    # print(colnames(new_row))
+    
+    articles(rbind(articles(), new_row)) 
   })
   
   # Charger les valeurs d'une ligne sélectionnée dans les inputs
   observeEvent(input$tableau_rows_selected, {
+    articles() |> arrange(desc(date_num))
     sel <- input$tableau_rows_selected
-    if (length(sel)) {
-      row <- articles()[sel, ]
+    # print(sel)
+    # print(length(sel))
+    #req(length(c(sel)) == 1)  # assure qu'une ligne est bien sélectionnée
+    # data <- articles()[rev(nrow(articles())),]
+    if (length(sel)==1) {
+      dt <- articles() |> arrange(desc(date_num))
+      row <- dt[sel, ]
+      # Mettre à jour les inputs avec les valeurs de la ligne sélectionnée
       updateTextInput(session, "nom", value = row$Nom)
       updateNumericInput(session, "prix_shein", value = row$`Prix Shein (€)`)
       updateNumericInput(session, "taux_cfa", value = row$`Taux CFA`)
@@ -273,9 +294,11 @@ server <- function(input, output, session) {
     
     data <- articles()
     
+    dat = format(as.POSIXct(Sys.time(), tz = "Europe/Paris"), "%d-%m-%Y %H:%M:%S")
+    
     data[sel, ] <- list(
       input$nom,
-      format(as.POSIXct(Sys.time(), tz = "Europe/Paris"), "%d-%m-%Y %H:%M:%S"),
+      dat,
       input$prix_shein,
       input$taux_cfa,
       input$transport,
@@ -285,17 +308,30 @@ server <- function(input, output, session) {
       round(prix_vente / 100) * 100,
       # round(prix_vente, 0),
       # round(benefice / 100) * 100,
-      benefice
+      benefice,
+      as.numeric(dmy_hms(dat, tz = "Europe/Paris"))
     )
     articles(data)
   })
   
   # Supprimer une ligne sélectionnée
+  # observeEvent(input$supprimer, {
+  #   req(input$tableau_rows_selected)  # nécessite une sélection
+  #   print(str(input$tableau_rows_selected))
+  #   data <- articles()
+  #   data <- data[-c(input$tableau_rows_selected), ]  # suppression
+  #   articles(data)
+  #   print(dim(articles(data)))
+  # })
+  # 
+  # Suppression des lignes sélectionnées
   observeEvent(input$supprimer, {
-    req(input$tableau_rows_selected)  # nécessite une sélection
-    data <- articles()
-    data <- data[-input$tableau_rows_selected, ]  # suppression
-    articles(data)
+    selected_rows <- input$tableau_rows_selected # Récupère les indices des lignes sélectionnées
+    if (!is.null(selected_rows)) {
+      dt <- articles() |> arrange(desc(date_num))
+      updated_data <- dt[-selected_rows, ] # Supprime les lignes sélectionnées
+      articles(updated_data)
+    }
   })
   
   # Affichage du tableau interactif
@@ -303,8 +339,8 @@ server <- function(input, output, session) {
     
     data <- articles()
     
-    if (nrow(articles()) > 1) {
-      data <- articles()
+    if (nrow(data) > 1) {
+      #data <- articles()
       data <- data %>%
         rename_with(~ case_when(
           .x == "Prix.Shein...." ~ "Prix Shein (€)",
@@ -315,20 +351,29 @@ server <- function(input, output, session) {
           .x == "Prix.de.vente..CFA." ~ "Prix de vente (CFA)",
           .x == "Bénéfice..CFA." ~ "Bénéfice (CFA)",
           TRUE ~ .x
-        ))
+        )) |> 
+        arrange(desc(date_num))
       #print(colnames(data))
+      
       data <- adorn_totals(data, where = "row",,,,
                            "Prix Shein (€)", 
                            "Prix d'achat (CFA)",
                            "Prix de vente (CFA)", 
-                           "Bénéfice (CFA)")
+                           "Bénéfice (CFA)") 
       
     }
     # Affichage du tableau avec DT
+    # data <- data |>
+    #   mutate(date_num = as.numeric(dmy_hms(Date, tz = "Europe/Paris"))) |>
+    #   arrange(desc(date_num))
+    
+    #print(dim(data))
+    
+    
     datatable(
-      data,
+      data, 
       rownames = FALSE,  # pas de numéros de ligne
-      selection = "single",  # sélection d’une seule ligne à la fois
+      selection = "multiple",  # sélection d’une seule ligne à la fois
       colnames = c(
         "Nom",
         "Date",
@@ -338,9 +383,10 @@ server <- function(input, output, session) {
         "Prix d'achat (CFA)",
         "Marge (%)",
         "Prix de vente (CFA)",
-        "Bénéfice (CFA)"
+        "Bénéfice (CFA)" #,"date_num"
       ),
       options = list(
+        #order = list(list(1, 'desc')), # trier par date croissante
         pageLength = 10,
         autoWidth = F,
         dom = 'Bfrtip',
@@ -348,7 +394,10 @@ server <- function(input, output, session) {
           list(extend = "excel", text = "📥 Exporter en Excel"),
           list(extend = "pdf", text = "📄 Exporter en PDF")
         ),
-        columnDefs = list(list(className = "dt-center", targets = "_all")), # centre toutes les colonnes
+        columnDefs = list(list(className = "dt-center", targets = "_all"),
+                          list(orderData=9,targets=1),
+                          list(visible=FALSE,targets=9)
+        ), # centre toutes les colonnes
         searching = FALSE,
         language = list(
           lengthMenu = "Afficher _MENU_ articles",
@@ -374,3 +423,8 @@ server <- function(input, output, session) {
 
 # Lancer l'application Shiny
 shinyApp(ui, server)
+
+# 
+# kk=format(as.POSIXct(Sys.time(), tz = "Europe/Paris"), "%d-%m-%Y %H:%M:%S")
+# dt <- dmy_hms(kk, tz = "Europe/Paris")  # dmy_hms = day-month-year hour-minute-second
+# as.numeric(dt)
